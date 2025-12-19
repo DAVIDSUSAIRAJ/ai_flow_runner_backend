@@ -1,0 +1,25 @@
+{
+  "name": "ai-flow-runner-backend",
+  "version": "1.0.0",
+  "description": "Backend server for AI Flow Runner using OpenRouter SDK",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "openrouter",
+    "gemini",
+    "ai",
+    "express"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@openrouter/sdk": "latest",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2"
+  }
+}
