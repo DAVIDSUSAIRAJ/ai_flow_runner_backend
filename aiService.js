@@ -2,11 +2,24 @@
 import { OpenRouter } from '@openrouter/sdk';
 
 // Initialize OpenRouter client
+const apiKey = process.env.OPENROUTER_API_KEY;
+
+if (!apiKey) {
+  console.error('ERROR: OPENROUTER_API_KEY is required!');
+}
+
 const openRouter = new OpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY || '<YOUR_OPENROUTER_API_KEY>',
+  apiKey: apiKey, // Always pass API key if available (required for higher rate limits)
   httpReferer: process.env.SITE_URL || 'http://localhost:3000',
   xTitle: 'AIFlow Runner Backend',
 });
+
+// Log API key status (first few chars only for security)
+if (apiKey) {
+  console.log('✅ OpenRouter API Key loaded:', apiKey.substring(0, 15) + '...');
+} else {
+  console.warn('⚠️  No API key found - using free tier with lower rate limits');
+}
 
 // Language names mapping
 const LANGUAGE_NAMES = {
@@ -21,12 +34,40 @@ const LANGUAGE_NAMES = {
   ko: 'Korean',
   ar: 'Arabic',
   pt: 'Portuguese',
+  te: 'Telugu',
+  ml: 'Malayalam',
+};
+
+// Language mapping for book chatbot display
+const BOOK_LANGUAGE_DISPLAY = {
+  en: 'English',
+  ta: 'Tamil (தமிழ்)',
+  hi: 'Hindi (हिंदी)',
+  es: 'Spanish',
+  fr: 'French',
+  de: 'German (Deutsch)',
+  ja: 'Japanese',
+  zh: 'Chinese',
+  ko: 'Korean',
+  ar: 'Arabic',
+  pt: 'Portuguese',
+  te: 'Telugu (తెలుగు)',
+  ml: 'Malayalam (മലയാളം)',
 };
 
 /**
- * Call OpenRouter API with Qwen3 Coder 480B A35B
+ * Sleep/delay function for retries
  */
-export const callAIAgent = async (text, language, history = []) => {
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Call OpenRouter API with Qwen3 Coder 480B A35B with automatic retry on rate limit
+ */
+export const callAIAgent = async (text, language, history = [], retryCount = 0) => {
+  const MAX_RETRIES = 3;
+  const INITIAL_DELAY = 2000; // 2 seconds
+  const MAX_DELAY = 30000; // 30 seconds
+  
   try {
     // Convert chat history to OpenRouter format
     const messages = [
@@ -66,15 +107,146 @@ export const callAIAgent = async (text, language, history = []) => {
     
     return String(response).trim();
   } catch (error) {
-    console.error('OpenRouter API Error:', error);
-    throw error;
+    console.error('=== OpenRouter API Error ===');
+    console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    
+    // Extract error details from various possible formats
+    let errorMessage = 'Unknown error';
+    let errorCode = 500;
+    let errorBody = null;
+    
+    // Try different ways to extract error info
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.error?.message) {
+      errorMessage = error.error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+    
+    // Extract status code
+    if (error.status) errorCode = error.status;
+    else if (error.statusCode) errorCode = error.statusCode;
+    else if (error.code && typeof error.code === 'number') errorCode = error.code;
+    else if (error.response?.status) errorCode = error.response.status;
+    
+    // Extract body/response data
+    if (error.body) errorBody = error.body;
+    else if (error.response?.data) errorBody = error.response.data;
+    else if (error.error) errorBody = error.error;
+    
+    // Check for rate limit in message or body
+    const isRateLimit = 
+      errorCode === 429 || 
+      errorMessage?.toLowerCase().includes('rate') ||
+      errorMessage?.toLowerCase().includes('limit') ||
+      (errorBody && typeof errorBody === 'string' && errorBody.toLowerCase().includes('rate'));
+    
+    console.error('Extracted error details:', {
+      message: errorMessage,
+      code: errorCode,
+      isRateLimit: isRateLimit,
+      hasApiKey: !!apiKey,
+      body: errorBody,
+      retryCount: retryCount
+    });
+    
+    // Auto-retry on rate limit with exponential backoff
+    if (isRateLimit && retryCount < MAX_RETRIES) {
+      const delay = Math.min(INITIAL_DELAY * Math.pow(2, retryCount), MAX_DELAY);
+      console.log(`⏳ Rate limit hit. Retrying in ${delay/1000} seconds... (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      
+      await sleep(delay);
+      
+      // Retry the request
+      return await callAIAgent(text, language, history, retryCount + 1);
+    }
+    
+    // Create enhanced error
+    const enhancedError = new Error();
+    enhancedError.message = errorMessage;
+    enhancedError.statusCode = errorCode;
+    enhancedError.isRateLimit = isRateLimit;
+    enhancedError.originalError = error;
+    enhancedError.retryCount = retryCount;
+    
+    // Set specific messages
+    if (isRateLimit) {
+      if (retryCount >= MAX_RETRIES) {
+        enhancedError.message = `Rate limit exceeded. Retried ${MAX_RETRIES} times. Please wait 30-60 seconds and try again.`;
+      } else {
+        enhancedError.message = 'Rate limit exceeded. The free model is temporarily rate-limited. Please wait 10-15 seconds and try again.';
+      }
+    } else if (errorMessage?.includes('cookie') || errorMessage?.includes('auth')) {
+      enhancedError.message = 'Authentication error. Please check your API key in .env file.';
+      enhancedError.statusCode = 401;
+    } else if (errorMessage?.includes('provider')) {
+      enhancedError.message = 'Model provider error. The free model may be temporarily unavailable. Please try again in a few moments.';
+    }
+    
+    throw enhancedError;
   }
+};
+
+/**
+ * Generate prompt for book chatbot
+ */
+export const getBookChatbotPrompt = async (bookContent, question, language, history) => {
+  const { formatChatHistory } = await import('./bookService.js');
+  const targetLang = BOOK_LANGUAGE_DISPLAY[language] || language;
+  const chatHistory = formatChatHistory(history);
+
+  return `You are a helpful assistant that answers questions based on a book.
+
+BOOK CONTENT:
+${bookContent || 'No book content available for this language.'}
+${chatHistory}
+CURRENT USER'S QUESTION: ${question}
+
+UNDERSTANDING USER INPUT:
+Users may type in various ways - you MUST understand their intent:
+
+1. TAMIL users may type:
+   - Pure Tamil: "காதல் பற்றி சொல்லு"
+   - Tanglish (Tamil + English): "kadhal patri sollu", "appa amma about sollu"
+   - Mixed: "love பற்றி சொல்லு"
+
+2. ENGLISH users may type:
+   - Normal English: "Tell me about love"
+   - With typos: "tel me abot love"
+
+3. HINDI users may type:
+   - Pure Hindi: "प्यार के बारे में बताओ"
+   - Hinglish (Hindi + English): "pyaar ke baare mein batao", "love ke baare mein bolo"
+
+4. TELUGU users may type:
+   - Pure Telugu: "ప్రేమ గురించి చెప్పు"
+   - Tenglish (Telugu + English): "prema gurinchi cheppu", "love gurinchi cheppu"
+
+5. MALAYALAM users may type:
+   - Pure Malayalam: "സ്നേഹത്തെ കുറിച്ച് പറയൂ"
+   - Manglish (Malayalam + English): "sneham kurichu parayoo", "love ne patti para"
+
+6. GERMAN users may type:
+   - Pure German: "Erzähl mir von der Liebe"
+   - With English mix: "Tell me about Liebe"
+
+STRICT RESPONSE RULES:
+1. Answer ONLY based on the book content above.
+2. Understand user intent regardless of spelling mistakes or language mixing.
+3. Use PREVIOUS CONVERSATION context if available (user may ask follow-up questions like "அது பற்றி மேலும் சொல்லு", "tell me more", etc.)
+4. DEFAULT language is ${targetLang}. Use ${targetLang} script for answers.
+5. EXCEPTION: If user explicitly asks for translation (e.g., "English la sollu", "translate to Hindi", "German-ல சொல்லு"), respond in that requested language.
+6. If answer not in book, say "I don't have information about this in the book" (in appropriate language).
+7. FORMAT URLs as markdown links: [link text](URL). Example: [Portfolio](https://example.com)
+
+YOUR ANSWER:`;
 };
 
 /**
  * Process text through AI agent for specific step type with optimized prompts
  */
-export const processStepWithAI = async (stepType, text, language, history) => {
+export const processStepWithAI = async (stepType, text, language, history, bookContent = null) => {
   let prompt = '';
   
   switch (stepType) {
