@@ -38,22 +38,6 @@ const LANGUAGE_NAMES = {
   ml: 'Malayalam',
 };
 
-// Language mapping for book chatbot display
-const BOOK_LANGUAGE_DISPLAY = {
-  en: 'English',
-  ta: 'Tamil (தமிழ்)',
-  hi: 'Hindi (हिंदी)',
-  es: 'Spanish',
-  fr: 'French',
-  de: 'German (Deutsch)',
-  ja: 'Japanese',
-  zh: 'Chinese',
-  ko: 'Korean',
-  ar: 'Arabic',
-  pt: 'Portuguese',
-  te: 'Telugu (తెలుగు)',
-  ml: 'Malayalam (മലയാളം)',
-};
 
 /**
  * Sleep/delay function for retries
@@ -188,65 +172,11 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
   }
 };
 
-/**
- * Generate prompt for book chatbot
- */
-export const getBookChatbotPrompt = async (bookContent, question, language, history) => {
-  const { formatChatHistory } = await import('./bookService.js');
-  const targetLang = BOOK_LANGUAGE_DISPLAY[language] || language;
-  const chatHistory = formatChatHistory(history);
-
-  return `You are a helpful assistant that answers questions based on a book.
-
-BOOK CONTENT:
-${bookContent || 'No book content available for this language.'}
-${chatHistory}
-CURRENT USER'S QUESTION: ${question}
-
-UNDERSTANDING USER INPUT:
-Users may type in various ways - you MUST understand their intent:
-
-1. TAMIL users may type:
-   - Pure Tamil: "காதல் பற்றி சொல்லு"
-   - Tanglish (Tamil + English): "kadhal patri sollu", "appa amma about sollu"
-   - Mixed: "love பற்றி சொல்லு"
-
-2. ENGLISH users may type:
-   - Normal English: "Tell me about love"
-   - With typos: "tel me abot love"
-
-3. HINDI users may type:
-   - Pure Hindi: "प्यार के बारे में बताओ"
-   - Hinglish (Hindi + English): "pyaar ke baare mein batao", "love ke baare mein bolo"
-
-4. TELUGU users may type:
-   - Pure Telugu: "ప్రేమ గురించి చెప్పు"
-   - Tenglish (Telugu + English): "prema gurinchi cheppu", "love gurinchi cheppu"
-
-5. MALAYALAM users may type:
-   - Pure Malayalam: "സ്നേഹത്തെ കുറിച്ച് പറയൂ"
-   - Manglish (Malayalam + English): "sneham kurichu parayoo", "love ne patti para"
-
-6. GERMAN users may type:
-   - Pure German: "Erzähl mir von der Liebe"
-   - With English mix: "Tell me about Liebe"
-
-STRICT RESPONSE RULES:
-1. Answer ONLY based on the book content above.
-2. Understand user intent regardless of spelling mistakes or language mixing.
-3. Use PREVIOUS CONVERSATION context if available (user may ask follow-up questions like "அது பற்றி மேலும் சொல்லு", "tell me more", etc.)
-4. DEFAULT language is ${targetLang}. Use ${targetLang} script for answers.
-5. EXCEPTION: If user explicitly asks for translation (e.g., "English la sollu", "translate to Hindi", "German-ல சொல்லு"), respond in that requested language.
-6. If answer not in book, say "I don't have information about this in the book" (in appropriate language).
-7. FORMAT URLs as markdown links: [link text](URL). Example: [Portfolio](https://example.com)
-
-YOUR ANSWER:`;
-};
 
 /**
  * Process text through AI agent for specific step type with optimized prompts
  */
-export const processStepWithAI = async (stepType, text, language, history, bookContent = null) => {
+export const processStepWithAI = async (stepType, text, language, history) => {
   let prompt = '';
   
   switch (stepType) {

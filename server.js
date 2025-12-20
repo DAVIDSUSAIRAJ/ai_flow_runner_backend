@@ -1,14 +1,66 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { callAIAgent, processStepWithAI, formatEmotionResult, formatCategoryResult, getBookChatbotPrompt } from './aiService.js';
-import { getBookContent, isBookChatbotRequest, normalizeLanguage } from './bookService.js';
+import { callAIAgent, processStepWithAI, formatEmotionResult, formatCategoryResult } from './aiService.js';
+
+// Language mapping for normalization
+const LANGUAGE_NAME_TO_CODE = {
+  'english': 'en',
+  'tamil': 'ta',
+  'hindi': 'hi',
+  'spanish': 'es',
+  'french': 'fr',
+  'german': 'de',
+  'japanese': 'ja',
+  'chinese': 'zh',
+  'korean': 'ko',
+  'arabic': 'ar',
+  'portuguese': 'pt',
+  'telugu': 'te',
+  'malayalam': 'ml',
+};
+
+const LANGUAGE_CODE_MAP = {
+  en: 'english',
+  ta: 'tamil',
+  hi: 'hindi',
+  es: 'spanish',
+  fr: 'french',
+  de: 'german',
+  ja: 'japanese',
+  zh: 'chinese',
+  ko: 'korean',
+  ar: 'arabic',
+  pt: 'portuguese',
+  te: 'telugu',
+  ml: 'malayalam',
+};
+
+// Normalize language input (handles both codes and full names)
+function normalizeLanguage(language) {
+  if (!language) return 'en';
+  
+  const langLower = language.toLowerCase().trim();
+  
+  // If it's already a code (2 letters), return it
+  if (langLower.length === 2 && LANGUAGE_CODE_MAP[langLower]) {
+    return langLower;
+  }
+  
+  // If it's a full name, convert to code
+  if (LANGUAGE_NAME_TO_CODE[langLower]) {
+    return LANGUAGE_NAME_TO_CODE[langLower];
+  }
+  
+  // Default to 'en' if unknown
+  return 'en';
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Chat endpoint - Handles both book chatbot and workflow steps
+// Chat endpoint - Handles workflow steps
 app.post('/chat', async (req, res) => {
   try {
     const { text, language = 'en', history = [], stepType } = req.body;
@@ -20,48 +72,35 @@ app.post('/chat', async (req, res) => {
       });
     }
 
+    if (!stepType) {
+      return res.status(400).json({ 
+        error: 'stepType is required',
+        success: false 
+      });
+    }
+
     // Normalize language (handles both "tamil" and "ta")
     const normalizedLang = normalizeLanguage(language);
 
-    let response;
-    let isBookChat = false;
-
-    // Check if it's a book chatbot request (no stepType or stepType is 'book_chat')
-    if (isBookChatbotRequest(stepType)) {
-      // Book Chatbot Mode
-      isBookChat = true;
-      const bookContent = getBookContent(normalizedLang);
-      const prompt = await getBookChatbotPrompt(bookContent, text, normalizedLang, history);
-      response = await callAIAgent(prompt, normalizedLang, []);
-      
-      res.json({
-        success: true,
-        question: text,
-        language: normalizedLang,
-        answer: response,
-        model: 'qwen/qwen3-coder:free',
-        type: 'book_chatbot'
-      });
-    } else {
-      // Workflow Step Mode
-      response = await processStepWithAI(stepType, text, normalizedLang, history);
-      
-      // Format results for specific step types
-      if (stepType === 'detect_emotion') {
-        response = formatEmotionResult(response);
-      } else if (stepType === 'categorize_text') {
-        response = formatCategoryResult(response);
-      }
-
-      res.json({
-        success: true,
-        response: response,
-        model: 'qwen/qwen3-coder:free',
-        stepType: stepType,
-        language: normalizedLang,
-        type: 'workflow'
-      });
+    // Workflow Step Mode
+    const response = await processStepWithAI(stepType, text, normalizedLang, history);
+    
+    // Format results for specific step types
+    let formattedResponse = response;
+    if (stepType === 'detect_emotion') {
+      formattedResponse = formatEmotionResult(response);
+    } else if (stepType === 'categorize_text') {
+      formattedResponse = formatCategoryResult(response);
     }
+
+    res.json({
+      success: true,
+      response: formattedResponse,
+      model: 'qwen/qwen3-coder:free',
+      stepType: stepType,
+      language: normalizedLang,
+      type: 'workflow'
+    });
   } catch (error) {
     console.error('=== Server Error ===');
     console.error('Error:', error);
