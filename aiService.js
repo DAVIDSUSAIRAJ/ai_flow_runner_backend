@@ -1,24 +1,25 @@
-// AI Agent Service using OpenRouter with Qwen3 Coder
-import { OpenRouter } from '@openrouter/sdk';
+// AI Agent Service using Groq SDK with Qwen2.5 Coder
+import Groq from 'groq-sdk';
 
-// Initialize OpenRouter client
-const apiKey = process.env.OPENROUTER_API_KEY;
+// Initialize Groq client
+// IMPORTANT: Add GROQ_API_KEY to your .env file for security
+// After testing, delete the old key from Groq Console and create a new one
+const apiKey = process.env.GROQ_API_KEY;
 
 if (!apiKey) {
-  console.error('ERROR: OPENROUTER_API_KEY is required!');
+  console.error('ERROR: GROQ_API_KEY is required in .env file!');
+  console.error('Please add GROQ_API_KEY=your_key_here to your .env file');
 }
 
-const openRouter = new OpenRouter({
-  apiKey: apiKey, // Always pass API key if available (required for higher rate limits)
-  httpReferer: process.env.SITE_URL || 'http://localhost:3000',
-  xTitle: 'AIFlow Runner Backend',
+const groq = new Groq({
+  apiKey: apiKey,
 });
 
 // Log API key status (first few chars only for security)
 if (apiKey) {
-  console.log('✅ OpenRouter API Key loaded:', apiKey.substring(0, 15) + '...');
+  console.log('✅ Groq API Key loaded:', apiKey.substring(0, 15) + '...');
 } else {
-  console.warn('⚠️  No API key found - using free tier with lower rate limits');
+  console.warn('⚠️  No API key found - requests will fail');
 }
 
 // Language names mapping
@@ -45,7 +46,7 @@ const LANGUAGE_NAMES = {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Call OpenRouter API with Qwen3 Coder 480B A35B with automatic retry on rate limit
+ * Call Groq API with Qwen2.5 Coder 32B with automatic retry on rate limit
  */
 export const callAIAgent = async (text, language, history = [], retryCount = 0) => {
   const MAX_RETRIES = 3;
@@ -53,7 +54,7 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
   const MAX_DELAY = 30000; // 30 seconds
   
   try {
-    // Convert chat history to OpenRouter format
+    // Convert chat history to Groq format
     const messages = [
       ...history.map(msg => ({
         role: msg.role,
@@ -65,8 +66,8 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
       },
     ];
 
-    const completion = await openRouter.chat.send({
-      model: 'qwen/qwen3-coder:free', // Free Qwen3 Coder model
+    const completion = await groq.chat.completions.create({
+      model: 'qwen-2.5-coder-32b',
       messages: messages,
       stream: false,
     });
@@ -77,29 +78,18 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
       throw new Error('No response from AI agent');
     }
 
-    // Handle both string and array content types
-    if (typeof response === 'string') {
-      return response.trim();
-    } else if (Array.isArray(response)) {
-      // Extract text from content items
-      const textParts = response
-        .filter((item) => item.type === 'text')
-        .map((item) => item.text || '')
-        .join('');
-      return textParts.trim();
-    }
-    
+    // Groq returns string content directly
     return String(response).trim();
   } catch (error) {
-    console.error('=== OpenRouter API Error ===');
+    console.error('=== Groq API Error ===');
     console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     
-    // Extract error details from various possible formats
+    // Extract error details from Groq error structure
     let errorMessage = 'Unknown error';
     let errorCode = 500;
     let errorBody = null;
     
-    // Try different ways to extract error info
+    // Groq errors typically have error.message or error.error
     if (error.message) {
       errorMessage = error.message;
     } else if (error.error?.message) {
@@ -108,11 +98,12 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
       errorMessage = error;
     }
     
-    // Extract status code
+    // Extract status code from Groq error
     if (error.status) errorCode = error.status;
     else if (error.statusCode) errorCode = error.statusCode;
     else if (error.code && typeof error.code === 'number') errorCode = error.code;
     else if (error.response?.status) errorCode = error.response.status;
+    else if (error.error?.code) errorCode = error.error.code;
     
     // Extract body/response data
     if (error.body) errorBody = error.body;
@@ -124,7 +115,8 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
       errorCode === 429 || 
       errorMessage?.toLowerCase().includes('rate') ||
       errorMessage?.toLowerCase().includes('limit') ||
-      (errorBody && typeof errorBody === 'string' && errorBody.toLowerCase().includes('rate'));
+      errorMessage?.toLowerCase().includes('quota') ||
+      (errorBody && typeof errorBody === 'string' && (errorBody.toLowerCase().includes('rate') || errorBody.toLowerCase().includes('quota')));
     
     console.error('Extracted error details:', {
       message: errorMessage,
@@ -159,13 +151,13 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
       if (retryCount >= MAX_RETRIES) {
         enhancedError.message = `Rate limit exceeded. Retried ${MAX_RETRIES} times. Please wait 30-60 seconds and try again.`;
       } else {
-        enhancedError.message = 'Rate limit exceeded. The free model is temporarily rate-limited. Please wait 10-15 seconds and try again.';
+        enhancedError.message = 'Rate limit exceeded. Please wait 10-15 seconds and try again.';
       }
-    } else if (errorMessage?.includes('cookie') || errorMessage?.includes('auth')) {
-      enhancedError.message = 'Authentication error. Please check your API key in .env file.';
+    } else if (errorMessage?.includes('api key') || errorMessage?.includes('auth') || errorMessage?.includes('unauthorized')) {
+      enhancedError.message = 'Authentication error. Please check your GROQ_API_KEY in .env file.';
       enhancedError.statusCode = 401;
-    } else if (errorMessage?.includes('provider')) {
-      enhancedError.message = 'Model provider error. The free model may be temporarily unavailable. Please try again in a few moments.';
+    } else if (errorMessage?.includes('model') || errorMessage?.includes('not found')) {
+      enhancedError.message = 'Model error. The requested model may be unavailable. Please try again in a few moments.';
     }
     
     throw enhancedError;

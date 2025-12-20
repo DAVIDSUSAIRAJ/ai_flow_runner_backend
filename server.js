@@ -96,7 +96,7 @@ app.post('/chat', async (req, res) => {
     res.json({
       success: true,
       response: formattedResponse,
-      model: 'qwen/qwen3-coder:free',
+      model: 'qwen-2.5-coder-32b',
       stepType: stepType,
       language: normalizedLang,
       type: 'workflow'
@@ -114,7 +114,7 @@ app.post('/chat', async (req, res) => {
     
     // Handle rate limit errors
     if (error.isRateLimit || statusCode === 429) {
-      errorMessage = 'Rate limit exceeded. Please wait 10-15 seconds and try again. The free model has usage limits.';
+      errorMessage = 'Rate limit exceeded. Please wait 10-15 seconds and try again.';
     }
     
     // Response with error details
