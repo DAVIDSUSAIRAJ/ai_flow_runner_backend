@@ -67,7 +67,7 @@ export const callAIAgent = async (text, language, history = [], retryCount = 0) 
     ];
 
     const completion = await groq.chat.completions.create({
-      model: 'qwen-2.5-coder-32b',
+      model: "llama-3.3-70b-versatile", 
       messages: messages,
       stream: false,
     });
